@@ -3,17 +3,85 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Block Dodger</title>
+<title>PALMERA BAY — an open-world crime game</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23ffd23e'/%3E%3Ctext x='16' y='23' font-size='20' text-anchor='middle'%3EP%3C/text%3E%3C/svg%3E">
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #11141b; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1a24; font-family: 'Segoe UI', system-ui, sans-serif; color: #f0f0ea; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
   #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  /* HUD */
+  #hud { display: none; position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+  #hud-top { position: absolute; top: 14px; left: 16px; text-shadow: 0 1px 4px #000; }
+  #hud-cash { font-size: 30px; font-weight: 800; color: #7dff9a; }
+  #hud-hp { width: 190px; height: 12px; background: rgba(0,0,0,.55); border: 1px solid #fff3; margin-top: 6px; }
+  #hud-hp-fill { height: 100%; width: 100%; background: #4ad87a; }
+  #hud-stars { font-size: 22px; color: #ffd23e; letter-spacing: 3px; margin-top: 4px; }
+  #hud-objective { font-size: 15px; margin-top: 6px; max-width: 460px; }
+  #hud-speed { position: absolute; right: 22px; bottom: 20px; font-size: 34px; font-weight: 800; text-shadow: 0 1px 4px #000; }
+  #minimap { position: absolute; left: 16px; bottom: 16px; width: 180px; height: 180px; border: 2px solid rgba(255,255,255,.35); background: rgba(10,18,26,.8); }
+  #toast { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.7); padding: 8px 18px; border-radius: 20px; font-size: 15px; opacity: 0; transition: opacity .4s; white-space: nowrap; }
+  #briefing { position: absolute; top: 22%; left: 50%; transform: translateX(-50%); text-align: center; background: rgba(8, 16, 24, .82); border: 1px solid #ffd23e66; padding: 18px 34px; border-radius: 8px; opacity: 0; transition: opacity .5s; max-width: 560px; }
+  #brief-title { font-size: 26px; font-weight: 800; color: #ffd23e; letter-spacing: 1px; }
+  #brief-body { font-size: 16px; margin-top: 8px; }
+  #flash { position: fixed; inset: 0; pointer-events: none; opacity: 0; z-index: 6; }
+  /* Menus */
+  .menu { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; z-index: 10; background: radial-gradient(ellipse at center, rgba(10,20,30,.25), rgba(6,12,18,.78)); text-align: center; }
+  .menu h1 { font-size: 64px; margin: 0; letter-spacing: 4px; color: #ffd23e; text-shadow: 0 3px 0 #b8322e, 0 6px 18px #000; }
+  .menu h2 { font-size: 40px; margin: 0; color: #ff5a4a; text-shadow: 0 3px 12px #000; letter-spacing: 3px; }
+  .menu p { font-size: 17px; max-width: 560px; line-height: 1.5; }
+  .menu button { pointer-events: auto; display: block; margin: 8px auto; padding: 12px 34px; font-size: 18px; font-weight: 700; color: #101418; background: #ffd23e; border: none; border-radius: 6px; cursor: pointer; min-width: 260px; }
+  .menu button:hover { background: #ffe27a; }
+  .menu button.secondary { background: #e8e8e0; }
+  .menu .hint { font-size: 13px; color: #c8d0d8; margin-top: 18px; }
+  #menu-title { display: flex; }
 </style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.min.js" } }
+</script>
 </head>
 <body>
-<canvas id="game" aria-label="Block Dodger: move the paddle left and right to dodge falling blocks and catch coins"></canvas>
+<canvas id="game" aria-label="Palmera Bay: an open-world crime game. Steal cars, lose the heat, run three jobs for the Bay Crew."></canvas>
 <p id="status" role="status" aria-live="polite"></p>
+
+<div id="hud">
+  <div id="hud-top">
+    <div id="hud-cash">$0</div>
+    <div id="hud-hp"><div id="hud-hp-fill"></div></div>
+    <div id="hud-stars">☆☆☆☆☆</div>
+    <div id="hud-objective"></div>
+  </div>
+  <div id="hud-speed"></div>
+  <canvas id="minimap" width="180" height="180"></canvas>
+  <div id="toast"></div>
+  <div id="briefing"><div id="brief-title"></div><div id="brief-body"></div></div>
+</div>
+<div id="flash"></div>
+
+<div class="menu" id="menu-title">
+  <h1>PALMERA BAY</h1>
+  <p>Danny Reyes is out — one last job for the Bay Crew. Steal cars, outrun the
+  Palmera Bay PD, run three jobs, and find the hidden cash. An original open-world
+  crime game: a whole city, traffic, pedestrians, a wanted level, missions, combat,
+  a minimap and a save.</p>
+  <button id="btn-new">NEW GAME</button>
+  <button id="btn-continue" class="secondary">CONTINUE</button>
+  <div class="hint">WASD move &nbsp;·&nbsp; Shift sprint &nbsp;·&nbsp; Space jump / handbrake &nbsp;·&nbsp; E steal car &nbsp;·&nbsp; F punch &nbsp;·&nbsp; Click shoot &nbsp;·&nbsp; Drag mouse to look &nbsp;·&nbsp; Esc pause &nbsp;·&nbsp; M mute</div>
+</div>
+
+<div class="menu" id="menu-pause">
+  <h2>PAUSED</h2>
+  <p>Take a breath, Danny. The city waits.</p>
+  <button id="btn-resume">RESUME</button>
+  <button id="btn-restart" class="secondary">RESTART MISSION</button>
+  <button id="btn-quit" class="secondary">SAVE &amp; QUIT TO TITLE</button>
+</div>
+
+<div class="menu" id="menu-end">
+  <h2 id="end-title">WASTED</h2>
+  <p id="end-sub"></p>
+  <button id="btn-retry">RETRY MISSION</button>
+</div>
+
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

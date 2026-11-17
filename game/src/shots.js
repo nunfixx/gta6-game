@@ -1,79 +1,88 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Deterministic scene setups for ?shot=start|drive|chase|mission&seed=N.
+// Each one stages the real game in a fixed state; main.js renders a few
+// frames and then sets window.__shotReady for the screenshot harness.
+import { makeCarMesh } from './vehicles.js';
+import { PACKAGE } from './missions.js';
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
-
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
+export function setupShot(G, name) {
+  G.shotMode = true;
+  G.shotName = name;
+  if (name === 'start') {
+    // Title screen over the city: Danny on the boardwalk, camera high.
+    G.setState('title');
+    G.player.x = 0;
+    G.player.z = 196;
+    G.player.heading = Math.PI;
+    G.player.mesh.position.set(0, 0, 196);
+    G.shotCam = { yaw: 0.15, pitch: 0.5, dist: 26, look: { x: 0, y: 6, z: 120 } };
+    return;
+  }
+  // The other three shots play the game.
+  G.setState('playing');
+  G.missions.state.active = true;
+  if (name === 'drive') {
+    // Danny in a sports car, doing 86 km/h down the coast road.
+    const car = G.vehicles.parked.find((c) => c.type === 'sports') || G.vehicles.parked[0];
+    car.x = -25;
+    car.z = -100;
+    car.heading = 0;
+    car.speed = 24;
+    car.mesh.position.set(car.x, 0, car.z);
+    car.mesh.rotation.y = car.heading;
+    G.player.x = car.x;
+    G.player.z = car.z;
+    G.playerCar = car;
+    G.player.mesh.visible = false;
+    G.camYaw = Math.PI;
+    G.camPitch = 0.28;
+    G.camDist = 13;
+    G.missions.state.index = 0;
+    G.missions.state.stage = 0;
+    return;
+  }
+  if (name === 'chase') {
+    // Three stars, two cop cars ahead as a roadblock, doing 72 km/h.
+    const car = G.vehicles.parked.find((c) => c.type === 'sports') || G.vehicles.parked[0];
+    car.x = -25;
+    car.z = 120;
+    car.heading = Math.PI;
+    car.speed = 20;
+    car.mesh.position.set(car.x, 0, car.z);
+    car.mesh.rotation.y = car.heading;
+    G.player.x = car.x;
+    G.player.z = car.z;
+    G.playerCar = car;
+    G.player.mesh.visible = false;
+    G.wanted = 3;
+    G.lastCrimeT = G.time;
+    G.camYaw = 0;
+    G.camPitch = 0.26;
+    G.camDist = 13;
+    G.missions.state.index = 0;
+    G.missions.state.stage = 0;
+    // Two cop cars ahead on the same road, facing the player.
+    for (const [cx, cz] of [[-28, 80], [-22, 80]]) {
+      const cop = {
+        type: 'sedan', x: cx, z: cz, heading: 0, speed: 0,
+        mesh: makeCarMesh('sedan', 0x1a1a1a, true),
+        driver: null, isCop: true, ramT: 0, punchT: 0,
+      };
+      cop.mesh.position.set(cx, 0, cz);
+      cop.mesh.rotation.y = 0;
+      G.scene.add(cop.mesh);
+      G.police.copCars.push(cop);
     }
+    G.hud.refresh();
+    return;
   }
-  return Infinity;
-}
-
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
-  }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
-}
-
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
-  }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
-  }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  // 'mission': Danny on foot on the dock road, beacon pillar on the package.
+  G.player.x = 145;
+  G.player.z = 175;
+  G.player.heading = Math.atan2(PACKAGE.x - 145, PACKAGE.z - 175);
+  G.player.mesh.position.set(145, 0, 175);
+  G.missions.state.index = 0;
+  G.missions.state.stage = 1;
+  G.camYaw = G.player.heading + Math.PI;
+  G.camPitch = 0.3;
+  G.camDist = 11;
 }
